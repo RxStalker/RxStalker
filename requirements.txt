@@ -3,10 +3,7 @@ Pillow
 scipy
 scikit-learn
 sympy
-gradient
-wifi
 numpy
 pandas
-ast
 filterpy
 scapy
