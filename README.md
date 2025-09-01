@@ -4,7 +4,7 @@ Python3.12:
 You can download the latest third-party Python package for this project through `pip install -r requirements.txt`.
 
 ## Datasets
-To hide the private information, we removed the dataset from the directory. If you need more support, please contact us at `xxxx@xxx.xxx`.
+To hide the private information, we have removed the dataset from the directory. For further assistance, please contact us at `xxxx@xxx.xxx`.
 
 ## data processing
 `RSSI_parser.py`: Extract RSSI data from captured network work traffic.
