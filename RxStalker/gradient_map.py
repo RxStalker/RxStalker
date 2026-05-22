@@ -1,396 +1,400 @@
-import matplotlib.pyplot as plt
-from PIL import Image
-from scipy.special import gradient
-from sympy.codegen.ast import float32
+"""
+Build a Wi-Fi fingerprint gradient map from per-AP reference points measurements.
+"""
 
-import wiFinGradient as wg
+import ast
 import math
+import sys
+from pathlib import Path
 
 import numpy as np
-
-from scipy.interpolate import Rbf
 import pandas as pd
+from numpy.linalg import norm
+from sklearn.linear_model import LinearRegression
 
-# Load the image
-image_path = "floor.png"
-image=Image.open(image_path)
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
 
-# building space information using meter as the measurement
-# attacker can get this information through AI tools or distance measurement tools with a smart phone
-building_length = 23.3
-building_width = 7.8
+from utils import const
 
-# define the grid cell size
-grid_cell_length = 1
-grid_cell_width = 1
-
-
-image_np = np.array(image)
-
-# Create a figure and axes
-fig, ax = plt.subplots()
-
-# Display the image
-ax.imshow(image_np)
-
-height, width, _ = image_np.shape
+DATASET_DIR = PROJECT_DIR / "dataset"
+INPUT_CSV = DATASET_DIR / "wifi_fingerprinting.csv"
+OUTPUT_CSV = DATASET_DIR / "gradient_map.csv"
 
 
-csv_path = '../dataset/mapping.csv'
-
-# Load data
-#layout = imread(image_path)
-data = pd.read_csv(csv_path)
-
-# Beacon IDs to plot
-beacon = data['beacon']
-
-grid_width = width-10 # 10 is adjustable pixel from your input image
-grid_height = height-20 # 20 is adjustable pixel from your input image
-
-# Resolution
-num_x = int(width / 4)
-num_y = int(num_x / (width / height))
-print(f"Resolution: {num_x} x {num_y}")
-
-# Grid generation
-x = np.linspace(0, grid_width, num_x)
-y = np.linspace(0, grid_height, num_y)
-
-gx, gy = np.meshgrid(x, y)
-gx, gy = gx.flatten(), gy.flatten()
-
-# get reference points information
-rf1 = data[data['type'] == 'rf1']
-rf2 = data[data['type'] == 'rf2']
-rf3 = data[data['type'] == 'rf3']
-rf4 = data[data['type'] == 'rf4']
-ap = data[data['type'] == 'ap']
-attacker = data[data['type'] == 'attacker']
-
-rf1l = data[data['type'] == 'rf1l'] # The left cell Wi-Fi fingerprinting for reference point 1
-rf1r = data[data['type'] == 'rf1r'] # The right cell Wi-Fi fingerprinting for reference point 1
-rf1t = data[data['type'] == 'rf1t'] # The up cell Wi-Fi fingerprinting for reference point 1
-rf1b = data[data['type'] == 'rf1b'] # The below cell Wi-Fi fingerprinting for reference point 1
-
-rf2l = data[data['type'] == 'rf2l'] # The left cell Wi-Fi fingerprinting for reference point 2
-rf2r = data[data['type'] == 'rf2r'] # The right cell Wi-Fi fingerprinting for reference point 2
-rf2t = data[data['type'] == 'rf2t'] # The up cell Wi-Fi fingerprinting for reference point 2
-rf2b = data[data['type'] == 'rf2b'] # The below cell Wi-Fi fingerprinting for reference point 2
-
-rf3l = data[data['type'] == 'rf3l'] # The left cell Wi-Fi fingerprinting for reference point 3
-rf3r = data[data['type'] == 'rf3r'] # The right cell Wi-Fi fingerprinting for reference point 3
-rf3t = data[data['type'] == 'rf3t'] # The up cell Wi-Fi fingerprinting for reference point 3
-rf3b = data[data['type'] == 'rf3b'] # The below cell Wi-Fi fingerprinting for reference point 3
-
-rf4l = data[data['type'] == 'rf4l'] # The left cell Wi-Fi fingerprinting for reference point 4
-rf4r = data[data['type'] == 'rf4r'] # The right cell Wi-Fi fingerprinting for reference point 4
-rf4t = data[data['type'] == 'rf4t'] # The up cell Wi-Fi fingerprinting for reference point 4
-rf4b = data[data['type'] == 'rf4b'] # The below cell Wi-Fi fingerprinting for reference point 4
+def build_room_grid():
+    """Divide room into cells; x left->right, y top->bottom."""
+    num_x = int(const.room_width / const.cell_width)
+    num_y = int(const.room_length / const.cell_length)
+    cells = [(x, y) for y in range(num_y) for x in range(num_x)]
+    return num_x, num_y, cells
 
 
-rbf = Rbf(data['Drawing X'], data['Drawing Y'], data[beacon], function='linear')
-z = rbf(gx, gy).reshape((num_y, num_x))
-# Render the interpolated data to the plot
-ax.imshow(z, vmin=-85, vmax=-25, extent=(0, grid_width, grid_height, 0),
-                           cmap='RdYlBu_r', alpha=1)
-
-# Overlay layout
-ax.imshow(image, extent=(0, grid_width, grid_height, 0), interpolation='bicubic', zorder=100, alpha=0.6)
+def parse_loc(value):
+    if isinstance(value, (tuple, list)):
+        return int(value[0]), int(value[1])
+    text = str(value).strip().strip("()[]")
+    parts = text.split(",")
+    return int(float(parts[0].strip())), int(float(parts[1].strip()))
 
 
-num_xcell = int(building_width/grid_cell_width)
-num_ycell = int(building_length/grid_cell_length)
-
-width_axhline = int(width/num_xcell)
-height_avhline = int(height/num_ycell)
-
-
-# Horizontal lines for y axes
-loc_y = []
-loc_x = []
-line_color = 'blue'
-ax.axhline(y=0, color='black' , linestyle='-', linewidth=2)
-loc_y.append(0)
-for lines in range(height_avhline, height-20, height_avhline): # 20 pixel is the distance error, modified according to your image
-    loc_y.append(lines)
-    ax.axhline(y=lines, color=line_color , linestyle='--', linewidth=1)
-ax.axhline(y=height-20, color='black' , linestyle='-', linewidth=2)
-loc_y.append(height-20)
-
-# # Vertical lines for x axes
-ax.axvline(x=0, color='black' , linestyle='-', linewidth=2)  # Vertical lines
-loc_x.append(0)
-for lines in range(width_axhline, width-10, width_axhline): # 10 pixel is the distance error, modified according to your image
-    loc_x.append(lines)
-    ax.axvline(x=lines, color=line_color, linestyle='--', linewidth=1)  # Vertical lines
-ax.axvline(x=width-10, color='black' , linestyle='-', linewidth=2)  # Vertical lines
-loc_x.append(width-10)
-
-positions = {}
-
-for i in range(len(loc_y)-1):
-    for j in range(len(loc_x)-1):
-        positions[(i,j)] = [(loc_y[i], loc_x[j]), (loc_y[i+1], loc_x[j+1])] # each cell location range by pixels
+def parse_series(value):
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return np.asarray(value, dtype=float)
+    return np.asarray(ast.literal_eval(str(value)), dtype=float)
 
 
+def hampel_filter(series, window=31, n_sigmas=3.0):
+    """Remove multipath outliers in RSSI (Hampel filter)."""
+    x = np.asarray(series, dtype=float)
+    n = len(x)
+    if n == 0:
+        return x
+    if n < window:
+        window = max(3, n if n % 2 == 1 else n - 1)
 
-# Define the coordinates for the star
-ap_y, ap_x = ap['y'].iloc[0], ap['x'].iloc[0]  # Adjust as needed
-#ap1_y, ap1_x = ap1['y'].iloc[0], ap1['x'].iloc[0]  # Adjust as needed
-size = 100  # Adjust as needed
-
-# Draw the star for the AP
-ax.scatter(ap_x, ap_y, marker='*', s=size, color='red', zorder=102)
-
-# draw attack position
-attacker_x = attacker['x'].iloc[0]
-attacker_y = attacker['y'].iloc[0]
-ax.scatter(attacker_x, attacker_y, marker='.', s=250, color='purple', zorder=102)
-
-# Add reference point
-ax.scatter(rf1['x'].iloc[0], rf1['y'].iloc[0], marker='.', s=250, color='red', zorder=102)
-ax.scatter(rf2['x'].iloc[0], rf2['y'].iloc[0], marker='.', s=250, color='red', zorder=102)
-ax.scatter(rf3['x'].iloc[0], rf3['y'].iloc[0], marker='.', s=250, color='red', zorder=102)
-ax.scatter(rf4['x'].iloc[0], rf4['y'].iloc[0], marker='.', s=250, color='red', zorder=102)
-
-position_rf1 = (math.ceil(rf1['y'].iloc[0]/height_avhline), math.ceil(rf1['x'].iloc[0]/width_axhline))
-position_rf2 = (math.ceil(rf2['y'].iloc[0]/height_avhline), math.ceil(rf2['x'].iloc[0]/width_axhline))
-position_rf3 = (math.ceil(rf3['y'].iloc[0]/height_avhline), math.ceil(rf3['x'].iloc[0]/width_axhline))
-position_rf4 = (math.ceil(rf4['y'].iloc[0]/height_avhline), math.ceil(rf4['x'].iloc[0]/width_axhline))
-
-positions[position_rf1].append(rf1['type', 'csi', -1, 'rssi', 'rtt'])
-positions[position_rf1].append(rf2['type', 'csi', -1, 'rssi', 'rtt'])
-positions[position_rf1].append(rf3['type', 'csi', -1, 'rssi', 'rtt'])
-positions[position_rf1].append(rf4['type', 'csi', -1, 'rssi', 'rtt'])
-
-position_ap = (math.ceil(ap_y/height_avhline), math.ceil(ap_x/width_axhline))
-#position_ap1 = (math.ceil(ap1_y/height_avhline), math.ceil(ap1_x/width_axhline))
-position_attacker = (math.ceil(attacker_y/height_avhline), math.ceil(attacker_x/width_axhline))
-
-positions[position_attacker].append(attacker['type', 'csi', -1, 'rssi', 'rtt'])
-
-# # if there is an obstacle， call estimate_rssi_from_csi to check the gradient, then correct the RSSI
-def correct_rssi_by_CSI(file_amplitude, file_phase, rssi):
-    csi_amplitudes = []
-    csi_phases = []
-
-    with open(file_amplitude, 'r') as f:
-        csi_amplitudes.append(np.array(f.readlines(), type=float32))
-    with open(file_phase, 'r') as f:
-        csi_phases.append(np.array(f.readlines(), type=float32))
-
-    csi_rssi = wg.estimate_rssi_from_csi(csi_amplitudes, csi_phases)
-
-    rssi_difference = wg.calculate_rssi_gradient(csi_rssi, rssi)
-    return rssi_difference
+    filtered = x.copy()
+    half = window // 2
+    for i in range(n):
+        segment = x[max(0, i - half) : min(n, i + half + 1)]
+        median = np.median(segment)
+        mad = np.median(np.abs(segment - median))
+        if mad < 1e-9:
+            continue
+        if abs(x[i] - median) > n_sigmas * 1.4826 * mad:
+            filtered[i] = median
+    return filtered
 
 
-# build a gradient map
-for i in range(len(loc_y)-1):
-    for j in range(len(loc_x)-1):
-        if (i, j) not in [position_rf1, position_rf2, position_rf3, position_rf4, attacker]:
-            gradient_rf1 = []
-            gradient_rf2 = []
-            gradient_rf3 = []
-            gradient_rf4 = []
-            if i > position_rf1[0] and j > position_rf1[1]:
-                mov_y = i - position_rf1[0]
-                mov_x = j - position_rf1[1]
-                gradient_csi_rf1 = rf1['csi'] + wg.calculate_csi_gradient(rf1b['csi'], rf1['csi'])*mov_y + wg.calculate_csi_gradient(rf1r['csi'], rf1['csi'])*mov_x
-                gradient_distance_rf1 = math.sqrt(mov_y**2+mov_x**2)
-                gradient_rssi_rf1 = rf1['rssi'] + wg.calculate_rssi_gradient(rf1b['rssi'], rf1['rssi'])*mov_y + wg.calculate_rssi_gradient(rf1r['rssi'], rf1['rssi'])*mov_x
-                gradient_rtt_rf1 = rf1['rtt'] + wg.calculate_rtt_gradient(rf1b['rtt'], rf1['rtt']) * mov_y + wg.calculate_rtt_gradient(rf1r['rtt'], rf1['rtt']) * mov_x
-                gradient_rf1 = ['rf1', gradient_csi_rf1, gradient_distance_rf1, gradient_rssi_rf1, gradient_rtt_rf1]
-            elif i > position_rf1[0] and j < position_rf1[1]:
-                mov_y = i - position_rf1[0]
-                mov_x = position_rf1[1] - j
-                gradient_csi_rf1 = rf1['csi'] + wg.calculate_csi_gradient(rf1b['csi'], rf1[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf1l['csi'], rf1['csi']) * mov_x
-                gradient_distance_rf1 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf1 = rf1['rssi'] + wg.calculate_rssi_gradient(rf1b['rssi'], rf1[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf1l['rssi'], rf1['rssi']) * mov_x
-                gradient_rtt_rf1 = rf1['rtt'] + wg.calculate_rtt_gradient(rf1b['rtt'], rf1[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf1l['rtt'], rf1['rtt']) * mov_x
-                gradient_rf1 = ['rf1', gradient_csi_rf1, gradient_distance_rf1, gradient_rssi_rf1, gradient_rtt_rf1]
-            elif i < position_rf1[0] and j > position_rf1[1]:
-                mov_y = position_rf1[0] - i
-                mov_x = j - position_rf1[1]
-                gradient_csi_rf1 = rf1['csi'] + wg.calculate_csi_gradient(rf1t['csi'], rf1[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf1r['csi'], rf1['csi']) * mov_x
-                gradient_distance_rf1 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf1 = rf1['rssi'] + wg.calculate_rssi_gradient(rf1t['rssi'], rf1[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf1r['rssi'], rf1['rssi']) * mov_x
-                gradient_rtt_rf1 = rf1['rtt'] + wg.calculate_rtt_gradient(rf1t['rtt'], rf1[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf1r['rtt'], rf1['rtt']) * mov_x
-                gradient_rf1 = ['rf1', gradient_csi_rf1, gradient_distance_rf1, gradient_rssi_rf1, gradient_rtt_rf1]
-            elif i < position_rf1[0] and j < position_rf1[1]:
-                mov_y = position_rf1[0] - i
-                mov_x = position_rf1[1] - j
-                gradient_csi_rf1 = rf1['csi'] + wg.calculate_csi_gradient(rf1t['csi'], rf1[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf1l['csi'], rf1['csi']) * mov_x
-                gradient_distance_rf1 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf1 = rf1['rssi'] + wg.calculate_rssi_gradient(rf1t['rssi'], rf1[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf1l['rssi'], rf1['rssi']) * mov_x
-                gradient_rtt_rf1 = rf1['rtt'] + wg.calculate_rtt_gradient(rf1t['rtt'], rf1[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf1l['rtt'], rf1['rtt']) * mov_x
-                gradient_rf1 = ['rf1', gradient_csi_rf1, gradient_distance_rf1, gradient_rssi_rf1, gradient_rtt_rf1]
+def denoise_rssi(rssi_series):
+    """Denoise RSSI time series before gradient construction."""
+    x = hampel_filter(parse_series(rssi_series))
+    if len(x) >= 5:
+        kernel = np.ones(5) / 5
+        x = np.convolve(x, kernel, mode="same")
+    return x
 
-            if i > position_rf2[0] and j > position_rf2[1]:
-                mov_y = i - position_rf2[0]
-                mov_x = j - position_rf2[1]
-                gradient_csi_rf2 = rf2['csi'] + wg.calculate_csi_gradient(rf2b['csi'], rf2[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf2r['csi'], rf2['csi']) * mov_x
-                gradient_distance_rf2 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf2 = rf2['rssi'] + wg.calculate_rssi_gradient(rf2b['rssi'], rf2[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf2r['rssi'], rf2['rssi']) * mov_x
-                gradient_rtt_rf2 = rf2['rtt'] + wg.calculate_rtt_gradient(rf2b['rtt'], rf2[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf2r['rtt'], rf2['rtt']) * mov_x
-                gradient_rf2 = ['rf2', gradient_csi_rf2, gradient_distance_rf2, gradient_rssi_rf2, gradient_rtt_rf2]
-            elif i > position_rf2[0] and j < position_rf2[1]:
-                mov_y = i - position_rf2[0]
-                mov_x = position_rf2[1] - j
-                gradient_csi_rf2 = rf2['csi'] + wg.calculate_csi_gradient(rf2b['csi'], rf2[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf2l['csi'], rf2['csi']) * mov_x
-                gradient_distance_rf2 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf2 = rf2['rssi'] + wg.calculate_rssi_gradient(rf2b['rssi'], rf2[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf2l['rssi'], rf2['rssi']) * mov_x
-                gradient_rtt_rf2 = rf2['rtt'] + wg.calculate_rtt_gradient(rf2b['rtt'], rf2[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf2l['rtt'], rf2['rtt']) * mov_x
-                gradient_rf2 = ['rf2', gradient_csi_rf2, gradient_distance_rf2, gradient_rssi_rf2, gradient_rtt_rf2]
-            elif i < position_rf2[0] and j > position_rf2[1]:
-                mov_y = position_rf2[0] - i
-                mov_x = j - position_rf2[1]
-                gradient_csi_rf2 = rf2['csi'] + wg.calculate_csi_gradient(rf2t['csi'], rf2[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf2r['csi'], rf2['csi']) * mov_x
-                gradient_distance_rf2 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf2 = rf2['rssi'] + wg.calculate_rssi_gradient(rf2t['rssi'], rf2[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf2r['rssi'], rf2['rssi']) * mov_x
-                gradient_rtt_rf2 = rf2['rtt'] + wg.calculate_rtt_gradient(rf2t['rtt'], rf2[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf2r['rtt'], rf2['rtt']) * mov_x
-                gradient_rf2 = ['rf2', gradient_csi_rf2, gradient_distance_rf2, gradient_rssi_rf2, gradient_rtt_rf2]
-            elif i < position_rf2[0] and j < position_rf2[1]:
-                mov_y = position_rf2[0] - i
-                mov_x = position_rf2[1] - j
-                gradient_csi_rf2 = rf2['csi'] + wg.calculate_csi_gradient(rf2t['csi'], rf2[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf2l['csi'], rf2['csi']) * mov_x
-                gradient_distance_rf2 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf2 = rf2['rssi'] + wg.calculate_rssi_gradient(rf2t['rssi'], rf2[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf2l['rssi'], rf2['rssi']) * mov_x
-                gradient_rtt_rf2 = rf2['rtt'] + wg.calculate_rtt_gradient(rf2t['rtt'], rf2[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf2l['rtt'], rf2['rtt']) * mov_x
-                gradient_rf2 = ['rf2', gradient_csi_rf2, gradient_distance_rf2, gradient_rssi_rf2, gradient_rtt_rf2]
 
-            if i > position_rf2[0] and j > position_rf2[1]:
-                mov_y = i - position_rf2[0]
-                mov_x = j - position_rf2[1]
-                gradient_csi_rf2 = rf2['csi'] + wg.calculate_csi_gradient(rf2b['csi'], rf2[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf2r['csi'], rf2['csi']) * mov_x
-                gradient_distance_rf2 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf2 = rf2['rssi'] + wg.calculate_rssi_gradient(rf2b['rssi'], rf2[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf2r['rssi'], rf2['rssi']) * mov_x
-                gradient_rtt_rf2 = rf2['rtt'] + wg.calculate_rtt_gradient(rf2b['rtt'], rf2[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf2r['rtt'], rf2['rtt']) * mov_x
-                gradient_rf2 = ['rf2', gradient_csi_rf2, gradient_distance_rf2, gradient_rssi_rf2, gradient_rtt_rf2]
-            elif i > position_rf2[0] and j < position_rf2[1]:
-                mov_y = i - position_rf2[0]
-                mov_x = position_rf2[1] - j
-                gradient_csi_rf2 = rf2['csi'] + wg.calculate_csi_gradient(rf2b['csi'], rf2[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf2l['csi'], rf2['csi']) * mov_x
-                gradient_distance_rf2 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf2 = rf2['rssi'] + wg.calculate_rssi_gradient(rf2b['rssi'], rf2[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf2l['rssi'], rf2['rssi']) * mov_x
-                gradient_rtt_rf2 = rf2['rtt'] + wg.calculate_rtt_gradient(rf2b['rtt'], rf2[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf2l['rtt'], rf2['rtt']) * mov_x
-                gradient_rf2 = ['rf2', gradient_csi_rf2, gradient_distance_rf2, gradient_rssi_rf2, gradient_rtt_rf2]
-            elif i < position_rf2[0] and j > position_rf2[1]:
-                mov_y = position_rf2[0] - i
-                mov_x = j - position_rf2[1]
-                gradient_csi_rf2 = rf2['csi'] + wg.calculate_csi_gradient(rf2t['csi'], rf2[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf2r['csi'], rf2['csi']) * mov_x
-                gradient_distance_rf2 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf2 = rf2['rssi'] + wg.calculate_rssi_gradient(rf2t['rssi'], rf2[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf2r['rssi'], rf2['rssi']) * mov_x
-                gradient_rtt_rf2 = rf2['rtt'] + wg.calculate_rtt_gradient(rf2t['rtt'], rf2[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf2r['rtt'], rf2['rtt']) * mov_x
-                gradient_rf2 = ['rf2', gradient_csi_rf2, gradient_distance_rf2, gradient_rssi_rf2, gradient_rtt_rf2]
-            elif i < position_rf2[0] and j < position_rf2[1]:
-                mov_y = position_rf2[0] - i
-                mov_x = position_rf2[1] - j
-                gradient_csi_rf2 = rf2['csi'] + wg.calculate_csi_gradient(rf2t['csi'], rf2[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf2l['csi'], rf2['csi']) * mov_x
-                gradient_distance_rf2 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf2 = rf2['rssi'] + wg.calculate_rssi_gradient(rf2t['rssi'], rf2[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf2l['rssi'], rf2['rssi']) * mov_x
-                gradient_rtt_rf2 = rf2['rtt'] + wg.calculate_rtt_gradient(rf2t['rtt'], rf2[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf2l['rtt'], rf2['rtt']) * mov_x
-                gradient_rf2 = ['rf2', gradient_csi_rf2, gradient_distance_rf2, gradient_rssi_rf2, gradient_rtt_rf2]
+def denoise_rtt(rtt_series):
+    """RTT is already denoised in preprocessing; keep full series."""
+    return parse_series(rtt_series)
 
-            if i > position_rf4[0] and j > position_rf4[1]:
-                mov_y = i - position_rf4[0]
-                mov_x = j - position_rf4[1]
-                gradient_csi_rf4 = rf4['csi'] + wg.calculate_csi_gradient(rf4b['csi'], rf4[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf4r['csi'], rf4['csi']) * mov_x
-                gradient_distance_rf4 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf4 = rf4['rssi'] + wg.calculate_rssi_gradient(rf4b['rssi'], rf4[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf4r['rssi'], rf4['rssi']) * mov_x
-                gradient_rtt_rf4 = rf4['rtt'] + wg.calculate_rtt_gradient(rf4b['rtt'], rf4[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf4r['rtt'], rf4['rtt']) * mov_x
-                gradient_rf4 = ['rf4', gradient_csi_rf4, gradient_distance_rf4, gradient_rssi_rf4, gradient_rtt_rf4]
-            elif i > position_rf4[0] and j < position_rf4[1]:
-                mov_y = i - position_rf4[0]
-                mov_x = position_rf4[1] - j
-                gradient_csi_rf4 = rf4['csi'] + wg.calculate_csi_gradient(rf4b['csi'], rf4[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf4l['csi'], rf4['csi']) * mov_x
-                gradient_distance_rf4 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf4 = rf4['rssi'] + wg.calculate_rssi_gradient(rf4b['rssi'], rf4[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf4l['rssi'], rf4['rssi']) * mov_x
-                gradient_rtt_rf4 = rf4['rtt'] + wg.calculate_rtt_gradient(rf4b['rtt'], rf4[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf4l['rtt'], rf4['rtt']) * mov_x
-                gradient_rf4 = ['rf4', gradient_csi_rf4, gradient_distance_rf4, gradient_rssi_rf4, gradient_rtt_rf4]
-            elif i < position_rf4[0] and j > position_rf4[1]:
-                mov_y = position_rf4[0] - i
-                mov_x = j - position_rf4[1]
-                gradient_csi_rf4 = rf4['csi'] + wg.calculate_csi_gradient(rf4t['csi'], rf4[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf4r['csi'], rf4['csi']) * mov_x
-                gradient_distance_rf4 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf4 = rf4['rssi'] + wg.calculate_rssi_gradient(rf4t['rssi'], rf4[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf4r['rssi'], rf4['rssi']) * mov_x
-                gradient_rtt_rf4 = rf4['rtt'] + wg.calculate_rtt_gradient(rf4t['rtt'], rf4[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf4r['rtt'], rf4['rtt']) * mov_x
-                gradient_rf4 = ['rf4', gradient_csi_rf4, gradient_distance_rf4, gradient_rssi_rf4, gradient_rtt_rf4]
-            elif i < position_rf4[0] and j < position_rf4[1]:
-                mov_y = position_rf4[0] - i
-                mov_x = position_rf4[1] - j
-                gradient_csi_rf4 = rf4['csi'] + wg.calculate_csi_gradient(rf4t['csi'], rf4[
-                    'csi']) * mov_y + wg.calculate_csi_gradient(rf4l['csi'], rf4['csi']) * mov_x
-                gradient_distance_rf4 = math.sqrt(mov_y ** 2 + mov_x ** 2)
-                gradient_rssi_rf4 = rf4['rssi'] + wg.calculate_rssi_gradient(rf4t['rssi'], rf4[
-                    'rssi']) * mov_y + wg.calculate_rssi_gradient(rf4l['rssi'], rf4['rssi']) * mov_x
-                gradient_rtt_rf4 = rf4['rtt'] + wg.calculate_rtt_gradient(rf4t['rtt'], rf4[
-                    'rtt']) * mov_y + wg.calculate_rtt_gradient(rf4l['rtt'], rf4['rtt']) * mov_x
-                gradient_rf4 = ['rf4', gradient_csi_rf4, gradient_distance_rf4, gradient_rssi_rf4, gradient_rtt_rf4]
 
-            gradient_from_rf = max(np.average(gradient_rf1[3]), np.average(gradient_rf2[3]), np.average(gradient_rf3[3]), np.average(gradient_rf4[3]))
-            if gradient_from_rf == np.average(gradient_rf1[3]):
-                positions[(i, j)].append(gradient_rf1)
-            elif gradient_from_rf == np.average(gradient_rf2[3]):
-                positions[(i, j)].append(gradient_rf2)
-            elif gradient_from_rf == np.average(gradient_rf3[3]):
-                positions[(i, j)].append(gradient_rf3)
-            elif gradient_from_rf == np.average(gradient_rf4[3]):
-                positions[(i, j)].append(gradient_rf4)
+def fit_line(x, y):
+    model = LinearRegression()
+    model.fit(x.reshape(-1, 1), y)
+    return model.coef_[0], model.intercept_
 
-with open("../dataset/gradient_map.txt", "w") as f:
-    f.write("rf,loc,rssi,rtt,bssid\n")
-    for key, value in positions.items():
-        f.write(f"{value[-1][0]},{key},{value[-1][3]},{value[-1][4]}\n")
 
-# Hide axes
-ax.axis('off')
-#ax.set_xticks(x)
-#ax.set_yticks(y)
+def calculate_rssi_gradient(rssi1, rssi2):
+    """Slope-direction gradient between two RSSI series (same AP)."""
+    a = np.asarray(rssi1, dtype=float)
+    b = np.asarray(rssi2, dtype=float)
+    n = min(len(a), len(b))
+    if n == 0:
+        return 0.0
+    a, b = a[:n], b[:n]
+    x = np.arange(n)
+    slope1, _ = fit_line(x, a)
+    slope2, _ = fit_line(x, b)
+    return float(norm(np.array([1.0, slope1]) - np.array([1.0, slope2])))
 
-# Show the plot
-#plt.show()
-plt.savefig('output_floor_map.png', dpi=2400)
+
+def calculate_rtt_gradient(rtt1, rtt2):
+    a = np.asarray(rtt1, dtype=float)
+    b = np.asarray(rtt2, dtype=float)
+    n = min(len(a), len(b))
+    if n == 0:
+        return 0.0
+    a, b = a[:n], b[:n]
+    x = np.arange(n)
+    slope1, _ = fit_line(x, a)
+    slope2, _ = fit_line(x, b)
+    return float(norm(np.array([1.0, slope1]) - np.array([1.0, slope2])))
+
+
+def extrapolate_series(base, neighbor, steps):
+    """
+    Per-sample linear extrapolation along one grid step.
+    More precise than applying a single scalar gradient to the full series.
+    """
+    if steps == 0:
+        return np.asarray(base, dtype=float)
+
+    base_arr = np.asarray(base, dtype=float)
+    neighbor_arr = np.asarray(neighbor, dtype=float)
+    n = min(len(base_arr), len(neighbor_arr))
+    if n == 0:
+        return base_arr
+
+    rate = neighbor_arr[:n] - base_arr[:n]
+    result = base_arr.copy()
+    result[:n] += rate * steps
+    return result
+
+
+def load_fingerprints(csv_path):
+    """
+    Index fingerprints by (location, AP) so each reference point keeps
+    a separate Wi-Fi profile per AP.
+    """
+    df = pd.read_csv(csv_path)
+    measured = {}
+    by_rf_ap = {}
+
+    for _, row in df.iterrows():
+        loc = parse_loc(row["rf_loc"])
+        rf_id = int(row["rf_id"])
+        ap_mac = str(row["ap_mac"]).strip()
+        entry = {
+            "ap_mac": ap_mac,
+            "ap_loc": row["ap_loc"],
+            "rf_id": rf_id,
+            "loc": loc,
+            "rssi": denoise_rssi(row["rssi"]),
+            "rtt": denoise_rtt(row["rtt"]),
+        }
+        measured[(loc, ap_mac)] = entry
+        by_rf_ap.setdefault(rf_id, {}).setdefault(ap_mac, {})[loc] = entry
+
+    return measured, by_rf_ap
+
+
+def collect_ap_macs(by_rf_ap):
+    ap_macs = set()
+    for ap_data in by_rf_ap.values():
+        ap_macs.update(ap_data.keys())
+    return sorted(ap_macs)
+
+
+def neighbor_offsets():
+    return {
+        "left": (-1, 0),
+        "right": (1, 0),
+        "top": (0, -1),
+        "bottom": (0, 1),
+    }
+
+
+def find_center_loc(locs):
+    for loc in locs:
+        x, y = loc
+        needed = {(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)}
+        if needed.issubset(locs.keys()):
+            return loc
+    return sorted(locs.keys())[0]
+
+
+def get_reference_bundles(by_rf_ap):
+    """
+    Build bundles per AP and reference point:
+    {ap_mac: {rf_id: {center, neighbors}}}.
+    """
+    bundles = {}
+    offsets = neighbor_offsets()
+
+    for rf_id in range(1, const.reference_point_number + 1):
+        if rf_id not in by_rf_ap:
+            continue
+
+        for ap_mac, locs in by_rf_ap[rf_id].items():
+            center_loc = find_center_loc(locs)
+            x, y = center_loc
+            neighbors = {}
+            for name, (dx, dy) in offsets.items():
+                nloc = (x + dx, y + dy)
+                if nloc in locs:
+                    neighbors[name] = locs[nloc]
+
+            bundles.setdefault(ap_mac, {})[rf_id] = {
+                "rf_id": rf_id,
+                "ap_mac": ap_mac,
+                "center": locs[center_loc],
+                "neighbors": neighbors,
+            }
+
+    return bundles
+
+
+def apply_axis_shift(est_rssi, est_rtt, center, neighbor, steps, use_series=True):
+    """Apply one-axis gradient shift using per-sample and slope-based terms."""
+    if steps == 0 or neighbor is None:
+        return est_rssi, est_rtt
+
+    if use_series:
+        est_rssi = extrapolate_series(est_rssi, neighbor["rssi"], steps)
+        est_rtt = extrapolate_series(est_rtt, neighbor["rtt"], steps)
+    else:
+        est_rssi = est_rssi + calculate_rssi_gradient(neighbor["rssi"], center["rssi"]) * steps
+        est_rtt = est_rtt + calculate_rtt_gradient(neighbor["rtt"], center["rtt"]) * steps
+
+    return est_rssi, est_rtt
+
+
+def estimate_from_reference(cell, bundle):
+    """
+    Estimate fingerprint at cell from one reference point + neighbors (same AP).
+    y increases top->bottom, x increases left->right.
+    """
+    cx, cy = cell
+    rx, ry = bundle["center"]["loc"]
+    center = bundle["center"]
+    neighbors = bundle["neighbors"]
+
+    est_rssi = np.asarray(center["rssi"], dtype=float).copy()
+    est_rtt = np.asarray(center["rtt"], dtype=float).copy()
+
+    if cy > ry and cx > rx:
+        mov_y, mov_x = cy - ry, cx - rx
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("bottom"), mov_y
+        )
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("right"), mov_x
+        )
+
+    elif cy > ry and cx < rx:
+        mov_y, mov_x = cy - ry, rx - cx
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("bottom"), mov_y
+        )
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("left"), mov_x
+        )
+
+    elif cy < ry and cx > rx:
+        mov_y, mov_x = ry - cy, cx - rx
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("top"), mov_y
+        )
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("right"), mov_x
+        )
+
+    elif cy < ry and cx < rx:
+        mov_y, mov_x = ry - cy, rx - cx
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("top"), mov_y
+        )
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("left"), mov_x
+        )
+
+    elif cy > ry:
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("bottom"), cy - ry
+        )
+
+    elif cy < ry:
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("top"), ry - cy
+        )
+
+    elif cx > rx:
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("right"), cx - rx
+        )
+
+    elif cx < rx:
+        est_rssi, est_rtt = apply_axis_shift(
+            est_rssi, est_rtt, center, neighbors.get("left"), rx - cx
+        )
+
+    return est_rssi, est_rtt
+
+
+def reference_weight(cell, ref_loc):
+    """Inverse-distance weight; closer references contribute more."""
+    cx, cy = cell
+    rx, ry = ref_loc
+    dist = math.sqrt((cx - rx) ** 2 + (cy - ry) ** 2)
+    return 1.0 / (dist + 1.0) ** 2
+
+
+def fuse_weighted_series(candidates):
+    """
+    Fuse multiple (series, weight) tuples from different reference points.
+    """
+    if not candidates:
+        return np.array([]), np.array([])
+
+    total_w = sum(weight for _, weight in candidates)
+    if total_w <= 0:
+        return candidates[0][0], candidates[0][0]
+
+    length = max(len(item[0]) for item in candidates)
+    fused = np.zeros(length, dtype=float)
+    for series, weight in candidates:
+        arr = np.asarray(series, dtype=float)
+        if len(arr) < length:
+            arr = np.pad(arr, (0, length - len(arr)), mode="edge")
+        fused += arr[:length] * (weight / total_w)
+
+    return fused
+
+
+def estimate_cell_for_ap(cell, ap_mac, bundles, measured):
+    """Estimate one AP fingerprint at a cell using all reference points for that AP."""
+    key = (cell, ap_mac)
+    if key in measured:
+        row = measured[key]
+        return row["rssi"], row["rtt"]
+
+    ap_bundles = bundles.get(ap_mac, {})
+    if not ap_bundles:
+        return np.array([]), np.array([])
+
+    rssi_candidates = []
+    rtt_candidates = []
+
+    for bundle in ap_bundles.values():
+        est_rssi, est_rtt = estimate_from_reference(cell, bundle)
+        weight = reference_weight(cell, bundle["center"]["loc"])
+        rssi_candidates.append((est_rssi, weight))
+        rtt_candidates.append((est_rtt, weight))
+
+    return (
+        fuse_weighted_series(rssi_candidates),
+        fuse_weighted_series(rtt_candidates),
+    )
+
+
+def build_gradient_map(input_csv=INPUT_CSV, output_csv=OUTPUT_CSV):
+    if not Path(input_csv).exists():
+        raise FileNotFoundError(f"Missing fingerprint data: {input_csv}")
+
+    num_x, num_y, cells = build_room_grid()
+    measured, by_rf_ap = load_fingerprints(input_csv)
+    ap_macs = collect_ap_macs(by_rf_ap)
+    bundles = get_reference_bundles(by_rf_ap)
+
+    print(f"Room grid: {num_x} x {num_y} = {len(cells)} cells")
+    print(f"APs: {len(ap_macs)}, reference bundles: {sum(len(v) for v in bundles.values())}")
+
+    rows = []
+    for cell in cells:
+        for ap_mac in ap_macs:
+            est_rssi, est_rtt = estimate_cell_for_ap(cell, ap_mac, bundles, measured)
+            if est_rssi.size == 0:
+                continue
+            rows.append(
+                {
+                    "loc": str(cell),
+                    "ap_mac": ap_mac,
+                    "rssi": list(np.round(est_rssi, 4)),
+                    "rtt": list(np.round(est_rtt, 4)),
+                }
+            )
+
+    output_csv = Path(output_csv)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows, columns=["loc", "ap_mac", "rssi", "rtt"]).to_csv(
+        output_csv, index=False
+    )
+    print(f"Gradient map saved to {output_csv} ({len(rows)} rows)")
+    return rows
+
+
+if __name__ == "__main__":
+    build_gradient_map()
