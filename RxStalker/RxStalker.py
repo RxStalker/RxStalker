@@ -15,12 +15,12 @@ import pandas as pd
 from filterpy.kalman import KalmanFilter
 from scapy.all import AsyncSniffer, conf
 from scapy.layers.dot11 import Dot11, RadioTap
-from scapy.layers.inet import ICMP, IP, TCP
+from scapy.layers.inet import IP
 from sklearn.neighbors import KNeighborsClassifier
 
 from utils import const
 from utils.rssi_denoising import denoise_rssi_multipath
-from utils.rtt_denoising import denoise_rtt_optimization
+from utils.rtt_denoising import capture_rtt_hping, denoise_rtt_optimization, find_hping_executable
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
@@ -32,6 +32,8 @@ LINUX_INTERFACE = "wlp0s20f3"
 DELTA = 0.1
 DEFAULT_K_NEIGHBORS = 4
 FEATURE_OPTION = 3
+HPING_COUNT_PER_INTERVAL = 3
+HPING_TIMEOUT_SEC = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -382,15 +384,44 @@ def denoise_wifi_fingerprint(fingerprint):
     }
 
 
-def real_time_wifi_fingerprint(target_ip, timeout=None, iface=None, interval=1.0):
-    """Capture and yield denoised Wi-Fi fingerprints persistently."""
+def collect_rtt_samples_hping(
+    target_ip,
+    count=HPING_COUNT_PER_INTERVAL,
+    timeout=HPING_TIMEOUT_SEC,
+    warn_once=None,
+):
+    """Probe RTT via hping3/hping ICMP; returns list of RTT samples in ms."""
+    samples = capture_rtt_hping(target_ip, count=count, timeout=timeout)
+    if not samples and warn_once is not None and not warn_once[0]:
+        if find_hping_executable() is None:
+            print(
+                "Warning: hping3/hping not found on PATH; RTT capture disabled. "
+                "Install hping3 (e.g. apt install hping3) and ensure it is on PATH."
+            )
+        else:
+            print(
+                f"Warning: hping returned no RTT for {target_ip}. "
+                "Try running with elevated privileges (sudo)."
+            )
+        warn_once[0] = True
+    return samples
+
+
+def real_time_wifi_fingerprint(
+    target_ip,
+    timeout=None,
+    iface=None,
+    interval=1.0,
+    hping_count=HPING_COUNT_PER_INTERVAL,
+    hping_timeout=HPING_TIMEOUT_SEC,
+):
+    """Capture RSSI via scapy and RTT via hping; yield denoised fingerprints."""
     target_ip = str(target_ip).strip()
     iface = iface or get_capture_interface()
 
     rssi_samples = []
     rtt_samples = []
-    pending_icmp = {}
-    pending_tcp = {}
+    hping_warn_once = [False]
 
     def handle_packet(pkt):
         if not pkt.haslayer(IP):
@@ -405,35 +436,27 @@ def real_time_wifi_fingerprint(target_ip, timeout=None, iface=None, interval=1.0
             if rssi is not None:
                 rssi_samples.append(rssi)
 
-        if pkt.haslayer(ICMP):
-            icmp = pkt[ICMP]
-            if icmp.type == 8:
-                key = (ip_layer.src, ip_layer.dst, int(icmp.id), int(icmp.seq))
-                pending_icmp[key] = float(pkt.time)
-            elif icmp.type == 0:
-                key = (ip_layer.dst, ip_layer.src, int(icmp.id), int(icmp.seq))
-                sent_time = pending_icmp.pop(key, None)
-                if sent_time is not None:
-                    rtt_samples.append((float(pkt.time) - sent_time) * 1000.0)
-
-        if pkt.haslayer(TCP):
-            tcp = pkt[TCP]
-            if tcp.flags == 0x02 and ip_layer.dst == target_ip:
-                key = (ip_layer.src, ip_layer.sport, ip_layer.dst, ip_layer.dport)
-                pending_tcp[key] = float(pkt.time)
-            elif tcp.flags == 0x12:
-                key = (ip_layer.dst, ip_layer.dport, ip_layer.src, ip_layer.sport)
-                sent_time = pending_tcp.pop(key, None)
-                if sent_time is not None:
-                    rtt_samples.append((float(pkt.time) - sent_time) * 1000.0)
-
     print(f"Capturing fingerprint for {target_ip} on {iface} (Ctrl+C to stop)")
+    hping_bin = find_hping_executable()
+    if hping_bin:
+        print(f"RTT capture: {hping_bin} -1 -c {hping_count} (every {interval}s)")
+    else:
+        print("RTT capture: hping3/hping not found; install hping3 for RTT features")
+
     sniffer = AsyncSniffer(iface=iface, prn=handle_packet, store=False)
     sniffer.start()
     start_time = time.time()
 
     try:
         while True:
+            rtt_samples.extend(
+                collect_rtt_samples_hping(
+                    target_ip,
+                    count=hping_count,
+                    timeout=hping_timeout,
+                    warn_once=hping_warn_once,
+                )
+            )
             raw = fingerprint_snapshot(target_ip, rssi_samples, rtt_samples)
             yield denoise_wifi_fingerprint(raw)
 
@@ -445,6 +468,14 @@ def real_time_wifi_fingerprint(target_ip, timeout=None, iface=None, interval=1.0
     finally:
         sniffer.stop()
 
+    rtt_samples.extend(
+        collect_rtt_samples_hping(
+            target_ip,
+            count=hping_count,
+            timeout=hping_timeout,
+            warn_once=hping_warn_once,
+        )
+    )
     yield denoise_wifi_fingerprint(
         fingerprint_snapshot(target_ip, rssi_samples, rtt_samples)
     )
@@ -461,6 +492,8 @@ def activate_rxstalker_attack(
     interval=1.0,
     k=DEFAULT_K_NEIGHBORS,
     option=FEATURE_OPTION,
+    hping_count=HPING_COUNT_PER_INTERVAL,
+    hping_timeout=HPING_TIMEOUT_SEC,
 ):
     """
     Full RxStalker pipeline:
@@ -470,7 +503,11 @@ def activate_rxstalker_attack(
     gradient_data, _ = load_gradient_map()
 
     fingerprint_stream = real_time_wifi_fingerprint(
-        target_ip, timeout=timeout, interval=interval
+        target_ip,
+        timeout=timeout,
+        interval=interval,
+        hping_count=hping_count,
+        hping_timeout=hping_timeout,
     )
     path = cyberstalker_tracking(
         gradient_data, fingerprint_stream, k=k, option=option
