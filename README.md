@@ -9,8 +9,6 @@ Wi-Fi indoor localization and tracking using RSSI/RTT fingerprinting, a gradient
 
 ## Enabling monitor mode on wireless interface
 
-- **You can use other methods**
-
 ```
 - Set network interface wlan0 into monitor mode using Aircrack-ng
 # airmon-ng start wlan0
