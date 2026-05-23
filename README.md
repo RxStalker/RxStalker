@@ -64,7 +64,7 @@ python main.py -o 2
 # Real-time tracking against gradient map
 python main.py -a -ip <TARGET_IP>
 
-# Optional: stop after N seconds, set KNN neighbors
+# Optional: stop after N seconds, set the K nearest neighbors
 python main.py -a -ip <TARGET_IP> -t 60 -k 4
 ```
 
@@ -76,9 +76,9 @@ python main.py -a -ip <TARGET_IP> -t 60 -k 4
 | `-a` | Start RxStalker real-time tracking |
 | `-ip` | Target device IP (required with `-a`) |
 | `-t` | Capture timeout in seconds |
-| `-k` | K neighbors for adaptive weighted KNN (default: 4) |
+| `-k` | K neighbors for adaptive weighted nearest neighbors |
 
-The default subnet in `main.py` is `100.100.33.1/22`; adjust in code if your deployment differs.
+
 
 ### Data processing
 
