@@ -2,12 +2,12 @@
 
 Wi-Fi indoor localization and tracking using RSSI/RTT fingerprinting, a gradient-map reference model, and optional ESP32 CSI-assisted multipath mitigation.
 
-## Requirements
+## 1. Requirements
 
 - **Python 3.12+**
 - Dependencies: `pip install -r requirements.txt`
 
-## Enabling monitor mode on wireless interface
+## 2. Enabling monitor mode on wireless interface
 
 ```
 - Set network interface wlan0 into monitor mode using Aircrack-ng
@@ -22,7 +22,7 @@ Wi-Fi indoor localization and tracking using RSSI/RTT fingerprinting, a gradient
 ```
 
 
-## Project structure
+## 3. Project structure
 
 ```
 RxStalker/
@@ -44,16 +44,8 @@ RxStalker/
     └── rtt_denoising.py    # RTT denoising for fingerprints
 ```
 
-Expected files under `dataset/` (create the folder as needed):
 
-| File | Description |
-|------|-------------|
-| `wifi_fingerprinting.csv` | Reference fingerprints for gradient-map building |
-| `gradient_map.csv` | Generated gradient map (output of `-g`) |
-| `*.pcap` / `*.pcapng` | Captured traffic for sniffed RSSI |
-| `*.csv` | ESP32 CSI exports ([ESP32-CSI-Tool](https://stevenmhernandez.github.io/ESP32-CSI-Tool/)) |
-
-## Usage
+## 4. Usage
 
 Run all commands from the project root unless noted.
 
@@ -130,7 +122,7 @@ Outputs (under `dataset/` by default):
 - **`utils/rtt_denoising.py`** — RTT smoothing for fingerprint RTT features.
 - **`utils/const.py`** — Room dimensions, cell size, and `lambda_reg` for RTT denoising.
 
-## Typical workflow
+## 5. Typical workflow
 
 1. Collect reference fingerprints → `dataset/wifi_fingerprinting.csv`
 2. `python main.py -g` → `dataset/gradient_map.csv`
