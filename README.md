@@ -7,6 +7,22 @@ Wi-Fi indoor localization and tracking using RSSI/RTT fingerprinting, a gradient
 - **Python 3.12+**
 - Dependencies: `pip install -r requirements.txt`
 
+## Enabling monitor mode on wireless interface
+
+- **You can use other methods**
+
+```
+- Set network interface wlan0 into monitor mode using Aircrack-ng
+# airmon-ng start wlan0
+- Find nearby channels
+# iw dev wlan0mon scan | grep DS
+- Set wlan0mon to Wi-Fi channel 40
+# iwconfig wlan0mon channel 40
+- Stop monitor mode
+# airmon-ng stop wlan0mon
+
+```
+
 
 ## Project structure
 
