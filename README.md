@@ -129,6 +129,3 @@ Outputs (under `dataset/` by default):
 3. (Optional) Collect ESP32 CSI / pcap and run `RSSI_parser.py` for cleaner RSSI
 4. `python main.py -a -ip <target>` for real-time localization
 
-## Configuration
-
-Edit `utils/const.py` for room grid geometry and RTT regularization. On Linux, set the capture interface in `RxStalker/RxStalker.py` (`LINUX_INTERFACE`).
