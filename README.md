@@ -2,6 +2,9 @@
 
 Wi-Fi indoor localization and tracking using RSSI/RTT fingerprinting, a gradient-map reference model, and optional ESP32 CSI-assisted multipath mitigation.
 
+:warning: :warning: :warning: Experimental - **Intended for Research purposes ONLY.** :warning: :warning: :warning:
+
+
 ## 1. Requirements
 
 - **Python 3.12+**
