@@ -29,7 +29,7 @@ Wi-Fi indoor localization and tracking using RSSI/RTT fingerprinting, a gradient
 
 ```
 RxStalker/
-├── main.py                 # CLI entry point
+├── main.py       
 ├── requirements.txt
 ├── dataset/                # Input/output data
 ├── RxStalker/
@@ -43,7 +43,7 @@ RxStalker/
 │   └── csi_collect.py      # ESP32 CSI serial logger
 └── utils/
     ├── const.py            # Room grid and RTT regularization
-    ├── rssi_denoising.py   # Hampel + CSI-assisted (RCAR) denoising
+    ├── rssi_denoising.py   # CSI-assisted (RCAR) denoising
     └── rtt_denoising.py    # RTT denoising for fingerprints
 ```
 
