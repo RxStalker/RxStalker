@@ -31,7 +31,7 @@ Wi-Fi indoor localization and tracking using RSSI/RTT fingerprinting, a gradient
 RxStalker/
 ├── main.py                 # CLI entry point
 ├── requirements.txt
-├── dataset/                # Input/output data (not shipped; see below)
+├── dataset/                # Input/output data
 ├── RxStalker/
 │   ├── RxStalker.py        # Real-time tracking and attack pipeline
 │   ├── gradient_map.py     # Build gradient_map.csv from fingerprints
